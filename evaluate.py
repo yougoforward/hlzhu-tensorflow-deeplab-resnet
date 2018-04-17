@@ -15,10 +15,10 @@ import time
 import tensorflow as tf
 import numpy as np
 
-from deeplab_resnet import structured_attention_DeepLabResNetModel, DeepLabResNetModelEdgeAttention, DeepLabResNetModel, ImageReader, prepare_label, DeepLabResNetModel, DeepLabResNetModelOri50, DeepLabResNetModelOri50gcnaspp, DeepLabResNetModelDepthwiseUp
+from deeplab_resnet import *
 #ori:
-#structured : 40001 Mean IoU: 0.751
-#stop_gradient_structured: 40001 Mean IoU: 0.763 60001 Mean IoU: 0.768 80001 Mean IoU: 0.771 100001 Mean IoU: 0.765
+#structured :  40001 Mean IoU: 0.751
+#stop_gradient_structured: 10000 0.671 20000 0.710 30000 0.743 4000  50000 0.757 60001   70000 0.777 80001 0.764 90000 0.773
 
 
 IMG_MEAN = np.array((104.00698793,116.66876762,122.67891434), dtype=np.float32)
@@ -28,7 +28,7 @@ DATA_LIST_PATH = './dataset/val.txt'
 IGNORE_LABEL = 255
 NUM_CLASSES = 21
 NUM_STEPS = 1449 # Number of images in the validation set.
-RESTORE_FROM = './snapshots/stop_gradient_multi_scale_structured_attention'
+RESTORE_FROM = './snapshots/stop_gradient_multi_scale_structured_attention/model.ckpt-90000'
 
 def get_arguments():
     """Parse all the arguments provided from the CLI.
@@ -88,8 +88,9 @@ def main():
     image_batch, label_batch = tf.expand_dims(image, dim=0), tf.expand_dims(label, dim=0) # Add one batch dimension.
 
     # Create network.
-    net = structured_attention_DeepLabResNetModel({'data': image_batch}, is_training=False, num_classes=args.num_classes)
-
+    # net = structured_attention_DeepLabResNetModel({'data': image_batch}, is_training=False, num_classes=args.num_classes)
+    net = stop_gradient_structured_attention_DeepLabResNetModel({'data': image_batch}, is_training=False,
+                                                  num_classes=args.num_classes)
     # Which variables to load.
     restore_var = tf.global_variables()
     

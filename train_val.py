@@ -48,7 +48,6 @@ def get_arguments():
       A list of parsed arguments.
     """
     parser = argparse.ArgumentParser(description="DeepLab-ResNet Network")
-
     parser.add_argument("--batch-size", type=int, default=BATCH_SIZE,
                         help="Number of images sent to the network in one step.")
     parser.add_argument("--data-dir", type=str, default=DATA_DIRECTORY,
@@ -357,16 +356,26 @@ def main():
     saver = tf.train.Saver(var_list=tf.global_variables(), max_to_keep=10)
 
     # Load variables if the checkpoint is provided.
-    if args.restore_from is not None:
-        loader = tf.train.Saver(var_list=restore_var)
-        load(loader, sess, args.restore_from)
+    # ckpt = tf.train.get_checkpoint_state('models')
+    # if ckpt and ckpt.model_checkpoint_path:
+    #     saver.restore(sess, ckpt.model_checkpoint_path)
+    #     global_step = int(ckpt.model_checkpoint_path.split('/')[-1].split('-')[-1])
+    if tf.train.latest_checkpoint(SNAPSHOT_DIR):
+        tf.logging.info('Ignoring initialization; other checkpoint exists')
+        latest_checkpoint = tf.train.latest_checkpoint(SNAPSHOT_DIR)
+        load(saver, sess, latest_checkpoint)
+        global_step = int(latest_checkpoint.split('/')[-1].split('-')[-1])
+    else:
+        if args.restore_from is not None:
+            loader = tf.train.Saver(var_list=restore_var)
+            load(loader, sess, args.restore_from)
+            global_step = 0
 
     # Start queue threads.
     threads = tf.train.start_queue_runners(coord=coord, sess=sess)
 
     # Iterate over training steps.
-
-    for step in range(args.num_steps):
+    for step in range(global_step, args.num_steps):
         start_time = time.time()
         feed_dict = {step_ph: step}
 
@@ -375,7 +384,6 @@ def main():
                 [reduced_loss, image_batch, label_batch, pred, total_summary, train_op], feed_dict=feed_dict)
             summary_writer.add_summary(summary, step)
             save(saver, sess, args.snapshot_dir, step)
-
         else:
             loss_value, _ = sess.run([reduced_loss, train_op], feed_dict=feed_dict)
         duration = time.time() - start_time
@@ -385,10 +393,6 @@ def main():
             val()
     coord.request_stop()
     coord.join(threads)
-
-
-
-
 
 
 if __name__ == '__main__':

@@ -16,7 +16,7 @@ import time
 import tensorflow as tf
 import numpy as np
 
-from deeplab_resnet import stop_gradient_structured_attention_DeepLabResNetModel,structured_attention_DeepLabResNetModel,ImageReader, decode_labels, inv_preprocess, prepare_label
+from deeplab_resnet import *
 
 IMG_MEAN = np.array((104.00698793, 116.66876762, 122.67891434), dtype=np.float32)
 
@@ -28,7 +28,7 @@ INPUT_SIZE = '321,321'
 LEARNING_RATE = 1e-3
 MOMENTUM = 0.9
 NUM_CLASSES = 21
-NUM_STEPS = 100000
+NUM_STEPS = 100001
 POWER = 0.9
 RANDOM_SEED = 1234
 RESTORE_FROM = './deeplab_resnet/deeplab_resnet_init.ckpt'
@@ -37,7 +37,10 @@ SAVE_PRED_EVERY = 10000
 SNAPSHOT_DIR = './snapshots/stop_gradient_multi_scale_structured_attention/'
 # SNAPSHOT_DIR = './snapshots/multi_scale_structured_attention/'
 WEIGHT_DECAY = 0.00005
+TEST_PRED_EVERY = 1000
 
+VAL_DATA_LIST_PATH = './dataset/val.txt'
+VAL_NUM_STEPS = 1449  # Number of images in the validation set.
 
 def get_arguments():
     """Parse all the arguments provided from the CLI.
@@ -82,16 +85,137 @@ def get_arguments():
                         help="How many images to save.")
     parser.add_argument("--save-pred-every", type=int, default=SAVE_PRED_EVERY,
                         help="Save summaries and checkpoint every often.")
+    parser.add_argument("--test_pred_every", type=int, default=TEST_PRED_EVERY,
+                        help="Save summaries and checkpoint every often.")
     parser.add_argument("--snapshot-dir", type=str, default=SNAPSHOT_DIR,
                         help="Where to save snapshots of the model.")
     parser.add_argument("--weight-decay", type=float, default=WEIGHT_DECAY,
                         help="Regularisation parameter for L2-loss.")
     return parser.parse_args()
 
+def val():
+    def get_arguments():
+        """Parse all the arguments provided from the CLI.
+
+        Returns:
+          A list of parsed arguments.
+        """
+        parser = argparse.ArgumentParser(description="DeepLabLFOV Network")
+        parser.add_argument("--data-dir", type=str, default=DATA_DIRECTORY,
+                            help="Path to the directory containing the PASCAL VOC dataset.")
+        parser.add_argument("--data-list", type=str, default=VAL_DATA_LIST_PATH,
+                            help="Path to the file listing the images in the dataset.")
+        parser.add_argument("--ignore-label", type=int, default=IGNORE_LABEL,
+                            help="The index of the label to ignore during the training.")
+        parser.add_argument("--num-classes", type=int, default=NUM_CLASSES,
+                            help="Number of classes to predict (including background).")
+        parser.add_argument("--num-steps", type=int, default=VAL_NUM_STEPS,
+                            help="Number of images in the validation set.")
+        parser.add_argument("--restore-from", type=str, default=SNAPSHOT_DIR,
+                            help="Where restore model parameters from.")
+        return parser.parse_args()
+
+    def load(saver, sess, ckpt_path):
+        '''Load trained weights.
+
+        Args:
+          saver: TensorFlow saver object.
+          sess: TensorFlow session.
+          ckpt_path: path to checkpoint file with parameters.
+        '''
+        if os.path.isdir(ckpt_path):
+            ckpt = tf.train.get_checkpoint_state(ckpt_path)
+            ckpt_path = ckpt.model_checkpoint_path
+
+        saver.restore(sess, ckpt_path)
+        print("Restored model parameters from {}".format(ckpt_path))
+
+
+    with tf.variable_scope(name_or_scope='', reuse=tf.AUTO_REUSE):
+
+        """Create the model and start the evaluation process."""
+        args = get_arguments()
+
+        # Create queue coordinator.
+        coord = tf.train.Coordinator()
+
+        # Load reader.
+        with tf.name_scope("create_inputs"):
+            reader = ImageReader(
+                args.data_dir,
+                args.data_list,
+                [321, 321],  # No defined input size.
+                False,  # No random scale.
+                False,  # No random mirror.
+                args.ignore_label,
+                IMG_MEAN,
+                coord)
+            image, label = reader.image, reader.label
+        image_batch, label_batch = tf.expand_dims(image, dim=0), tf.expand_dims(label,
+                                                                                dim=0)  # Add one batch dimension.
+
+        # Create network.
+        net = stop_gradient_structured_attention_DeepLabResNetModel({'data': image_batch}, is_training=False,
+                                                      num_classes=args.num_classes)
+
+        # Which variables to load.
+        restore_var = tf.global_variables()
+
+        # Predictions.
+        raw_output = net.layers['fc1_voc12']
+        raw_output = tf.image.resize_bilinear(raw_output, tf.shape(image_batch)[1:3, ])
+        raw_output = tf.argmax(raw_output, dimension=3)
+        pred = tf.expand_dims(raw_output, dim=3)  # Create 4-d tensor.
+
+        # mIoU
+        pred = tf.reshape(pred, [-1, ])
+        gt = tf.reshape(label_batch, [-1, ])
+        # tensorflow 1.3.0 conflict
+        # weights = tf.cast(tf.less_equal(gt, args.num_classes - 1), tf.int32) # Ignoring all labels greater than or equal to n_classes.
+        # mIoU, update_op = tf.contrib.metrics.streaming_mean_iou(pred, gt, num_classes=args.num_classes, weights=weights)
+        indices = tf.squeeze(tf.where(tf.less_equal(gt, args.num_classes - 1)), 1)  # ignore all labels >= num_classes
+        gt = tf.cast(tf.gather(gt, indices), tf.int32)
+        pred = tf.gather(pred, indices)
+        mIoU, update_op = tf.contrib.metrics.streaming_mean_iou(pred, gt, num_classes=args.num_classes)
+        # Set up tf session and initialize variables.
+        config = tf.ConfigProto()
+        config.gpu_options.allow_growth = True
+        sess = tf.Session(config=config)
+        init = tf.global_variables_initializer()
+
+        sess.run(init)
+        sess.run(tf.local_variables_initializer())
+
+        # Load weights.
+        loader = tf.train.Saver(var_list=restore_var)
+        if args.restore_from is not None:
+            load(loader, sess, args.restore_from)
+        # if args.restore_from is not None:
+        #     if os.path.isdir(args.restore_from):
+        #         ckpt = tf.train.get_checkpoint_state(args.restore_from)
+        #         loader.restore(sess, ckpt.model_checkpoint_path)
+        #     else:
+        #         load(loader, sess, args.restore_from)
+
+
+        # Start queue threads.
+        threads = tf.train.start_queue_runners(coord=coord, sess=sess)
+
+        # Iterate over training steps.
+        for step in range(args.num_steps):
+            mIoUs, preds, _ = sess.run([mIoU, pred, update_op])
+            if step % 100 == 0:
+                print('step {:d}'.format(step))
+        print('Mean IoU: {:.3f}'.format(mIoU.eval(session=sess)))
+        coord.request_stop()
+        coord.join(threads)
+        return mIoUs
+
+
 
 def save(saver, sess, logdir, step):
     '''Save weights.
- 
+
     Args:
       saver: TensorFlow Saver object.
       sess: TensorFlow session.
@@ -185,8 +309,7 @@ def main():
     prediction1 = tf.gather(raw_prediction1, indices)
     prediction2= tf.gather(raw_prediction2, indices)
     prediction = tf.gather(raw_prediction, indices)
-    #
-    #  Pixel-wise softmax loss.
+    # Pixel-wise softmax loss.
     one_hot_gt = tf.one_hot(gt, NUM_CLASSES, on_value=1.0, off_value=0.0, axis=-1)
     loss = tf.nn.sparse_softmax_cross_entropy_with_logits(logits=prediction, labels=gt)
     loss_sigmoid1 = tf.nn.sigmoid_cross_entropy_with_logits(labels=one_hot_gt, logits=prediction1)
@@ -216,6 +339,9 @@ def main():
 
     summary_writer = tf.summary.FileWriter(args.snapshot_dir,
                                            graph=tf.get_default_graph())
+
+    mIoU_summary_val = tf.Summary()
+    summary_writer_val = tf.summary.FileWriter(args.snapshot_dir + '/val')
 
     # Define loss and optimisation parameters.
     base_lr = tf.constant(args.learning_rate)
@@ -281,6 +407,11 @@ def main():
             loss_value, _ = sess.run([reduced_loss, train_op], feed_dict=feed_dict)
         duration = time.time() - start_time
         print('step {:d} \t loss = {:.3f}, ({:.3f} sec/step)'.format(step, loss_value, duration))
+
+        if step % args.test_pred_every==0 or step ==NUM_STEPS:
+            mIoU = val()
+            mIoU_summary_val.value.add(tag="mIoU", simple_value=mIoU)
+            summary_writer_val.add_summary(mIoU_summary_val, step)
     coord.request_stop()
     coord.join(threads)
 
