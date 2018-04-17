@@ -1,0 +1,7 @@
+python convert.py /home/long/github/tensorflow-deeplab-resnet/misc/deploy.prototxt --caffemodel /home/long/github/train-DeepLab/DeepLabv2-resnet-101/init.caffemodel --data-output-path /home/long/github/tensorflow-deeplab-resnet/initnpyweights.npy
+
+python npy2ckpt.py /home/long/github/tensorflow-deeplab-resnet/npyweights.npy --save-dir=/home/long/github/tensorflow-deeplab-resnet/tensorflowweights
+
+python convert.py resnet50/ResNet-50-deploy.prototxt --caffemodel resnet50/ResNet-50-model.caffemodel --data-output-path resnet50/init50.npy
+
+python npy2ckpt.py resnet50/init50.npy --save-dir=resnet50/
