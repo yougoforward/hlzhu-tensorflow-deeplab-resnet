@@ -29,12 +29,12 @@ INPUT_SIZE = '321,321'
 LEARNING_RATE = 1e-3
 MOMENTUM = 0.9
 NUM_CLASSES = 21
-NUM_STEPS = 60001
+NUM_STEPS = 100001
 POWER = 0.9
 RANDOM_SEED = 1234
 RESTORE_FROM = './deeplab_resnet/deeplab_resnet_init.ckpt'
 SAVE_NUM_IMAGES = 2
-SAVE_PRED_EVERY = 1000
+SAVE_PRED_EVERY = 5000
 SNAPSHOT_DIR = './snapshots/structured_attention_finalscale_before_softmax/'
 # SNAPSHOT_DIR = './snapshots/structured_attention_finalscale_before_softmax/'
 WEIGHT_DECAY = 0.00005
@@ -163,7 +163,7 @@ def val():
         restore_var = tf.global_variables()
 
         # Predictions.
-        raw_output = net.layers['fc_attentioned_prediction']
+        raw_output = net.layers['fc1_voc12']
         raw_output = tf.image.resize_bilinear(raw_output, tf.shape(image_batch)[1:3, ])
         raw_output = tf.argmax(raw_output, dimension=3)
         pred = tf.expand_dims(raw_output, dim=3)  # Create 4-d tensor.
@@ -286,7 +286,7 @@ def main():
     # raw_output1 = net.layers['fc1_voc12']
     raw_output2 = net.layers['fc2_voc12']
     # raw_output3 = net.layers['fc3_voc12']
-    raw_output = net.layers['fc_attentioned_prediction']
+    raw_output = net.layers['fc1_voc12']
     # Which variables to load. Running means and variances are not trainable,
     # thus all_variables() should be restored.
     # restore_var = [v for v in tf.global_variables() if 'fc' not in v.name or not args.not_restore_last]
